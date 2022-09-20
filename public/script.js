@@ -1,120 +1,79 @@
+// import { myPeerOpen, addVideoStream, removeVideoElement } from './util.js';
+
+// The room id is created by the server and redirects to this subdirectory which is the 'room'
+// console.log(`ROOM_ID is ${ROOM_ID}`);
+const roomId = document.URL.split('/')[3];
+const videoGrid = document.getElementById('video-grid');
+const peers = {};
+
+// Use async wrapper because there are awaits
 (async () => {
 
-  // let streamDummy = await navigator.mediaDevices.getUserMedia({
-  //   video: { width: 1280, height: 720 },
-  //   audio: true
-  // })
-
-  // streamDummy = null;
-
-  const socket = io('/')
-
-  // myVideo.muted = true
-
-  const peers = {}
-
   // Get my peer object
-  myPeer = new Peer(null, {
+  let myPeer = new Peer(null, {
     host: "evening-atoll-16293.herokuapp.com",
     port: 443,
     secure: true,
   });
 
-  await myPeerOpen();
+  await myPeerOpen(myPeer);
+
   const myPeerId = myPeer.id;
 
-  // Get permissions
-
-
-  // Open up my video stream
+  // Open up my video stream and add it to the screen
   let stream = await navigator.mediaDevices.getUserMedia({
     video: { width: 1280, height: 720 },
     audio: true
   })
 
-  addVideoStream(myPeerId, stream)
-  // const video = document.createElement('video')
-  // video.srcObject = stream
-  // video.dataset.peerId = myPeerId;
-  // video.setAttribute("playsinline", true);
-  // videoGrid.append(video)
-  // video.addEventListener('loadedmetadata', () => video.play())
+  addVideoStream(myPeerId, stream, videoGrid)
 
+  // Initialize socket.  Server will receive a 'connection' event and wait on your 'join-room' event
+  const socket = io('/');
 
-  // The room id is created by the server at the root, redirected to this room
-  // The view room.ejs receives this variable from the server and
-  // sets the variable ROOM_ID to this value so this script can know it
-  const roomId2 = document.URL.split('/')[3];
+  // Send server 'join-room' event, server will broadcast a 'peer-joined-room'
+  socket.emit('join-room', roomId, myPeerId)
 
+  // When a partner 'joins-room', you will receive a broacast'peer-joined-room'
+  // Call that new peer using peerjs and send them your stream
+  socket.on('peer-joined-room', ptnrPeerId => {
 
-  // Tell the server you joined the room, and the server will broadcast to 
-  // everyone in the room your peerId who will call your peerId;
-  socket.emit('join-room', roomId2, myPeerId)
-  // socket.emit('join-room', ROOM_ID, myPeer.id)
+    // peerjs 'call' the new peer that just joined the room and send them your stream
+    const call = myPeer.call(ptnrPeerId, stream)
 
-  // addVideoStream(myPeerId, stream)
+    // peerjs on event 'stream', partner peer send you his stream
+    call.on('stream', ptnrStream => addVideoStream(ptnrPeerId, ptnrStream, videoGrid))
 
-  // Receive call from your peers
+    // peerjs on event 'close'
+    call.on('close', () => removeVideoElement(ptnrPeerId))
+
+    // log the ptrnPeerIds so you can remove them later
+    peers[ptnrPeerId] = call
+  })
+
+  // Receive call from your peer(s).  This is due to your 'join-room' and peers receiving broadcast 'peer-joined-room'
   myPeer.on('call', call => {
-    console.log('myPeer.on("call")');
 
-    // console.log('myPeer.on call');
-    console.log(stream);
-    console.log(call);
-    console.log(`partnerPeerId = ${call.peer}`);
-
-
-    const partnerPeerId = call.peer;
+    // partner Peer Id
+    const ptnrPeerId = call.peer;
 
     // Answer the call and give them your stream
     call.answer(stream)
 
-    // When partner sends you their streem, add it
-    call.on('stream', partnerStream => {
-      console.log(`You call and are answered from:  ${partnerPeerId}`);
+    // When partner sends you their stream, add it
+    call.on('stream', ptnrStream => addVideoStream(ptnrPeerId, ptnrStream, videoGrid))
 
-      addVideoStream(partnerPeerId, partnerStream)
-    })
+    // If peer closes, remove video element
+    call.on('close', () => removeVideoElement(ptnrPeerId))
 
-    call.on('close', () => {
-      // video.remove()
-      removeVideoElement(partnerPeerId)
-    })
-
-    peers[partnerPeerId] = call
+    // log the ptrnPeerIds so you can remove them later
+    peers[ptnrPeerId] = call
   })
 
-
-  // When a user connects, call them and send them your stream
-  socket.on('peer-connected', partnerPeerId => {
-    console.log('socket.on("peer-connected")');
-
-    const call2 = myPeer.call(partnerPeerId, stream)
-
-    call2.on('stream', partnerStream => {
-      console.log(`Peer connected and they answered your call:  ${partnerPeerId}`);
-
-      addVideoStream(partnerPeerId, partnerStream)
-    })
-
-    call2.on('close', () => {
-      // video.remove()
-      removeVideoElement(partnerPeerId)
-    })
-
-    peers[partnerPeerId] = call2
+  // Socket sends 'peer-exited-room' event so call the peerjs close event for that ptnrPeer
+  socket.on('peer-exited-room', ptnrPeerId => {
+    console.log(`${ptnrPeerId} exited the room`);
+    peers[ptnrPeerId]?.close()
   })
-
-  socket.on('peer-disconnected', partnerPeerId => {
-    if (peers[partnerPeerId]) peers[partnerPeerId].close()
-  })
-
-
-
-
-
-
-
-
 
 })();
